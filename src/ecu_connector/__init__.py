@@ -4,18 +4,23 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-# Create formatter
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Only add handlers if they haven't been added yet
+if not logger.handlers:
+    # Create formatter
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-# Add console handler
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(formatter)
-logger.addHandler(console_handler)
+    # Add console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
 
-# Add file handler
-file_handler = logging.FileHandler("ecu_connector.log")
-file_handler.setFormatter(formatter)
-logger.addHandler(file_handler)
+    # Add file handler
+    file_handler = logging.FileHandler("ecu_connector.log")
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    # Prevent propagation to root logger to avoid duplicate messages
+    logger.propagate = False
 
 from .connector import ECUConnector
 from .transport import ITransport, TCPTransport

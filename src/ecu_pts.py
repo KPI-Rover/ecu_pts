@@ -13,11 +13,15 @@ from ecu_connector import logger as ecu_logger
 
 # Setup logging with more detailed format
 import logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
-)
+
+# Only configure logging if not already configured
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler()]
+    )
+
 ui_logger = logging.getLogger("ui_control")
 
 class SliderWithLabels(QWidget):
@@ -416,9 +420,13 @@ class MotorControlUI(QWidget):
     def stop_all_motors(self):
         # Set all UI sliders to zero
         ui_logger.info("Stop all motors requested")
+        self.all_speed_slider.slider.blockSignals(True)
         self.all_speed_slider.setValue(0)
+        self.all_speed_slider.slider.blockSignals(False)
         for slider in self.motor_sliders:
+            slider.slider.blockSignals(True)
             slider.setValue(0)
+            slider.slider.blockSignals(False)
         
         # Send stop command to rover if connected
         if self.connected and self.ecu_connector:
@@ -457,58 +465,3 @@ if __name__ == '__main__':
         if window.connected and window.ecu_connector:
             window.stop_all_motors()
             window.ecu_connector.disconnect()
-    app.setStyle('Fusion')
-    
-    window = MotorControlUI()
-    window.show()
-    
-    # Make sure to stop motors on exit
-    try:
-        sys.exit(app.exec_())
-    except SystemExit:
-        # Attempt to stop motors if the UI is closing
-        if window.connected and window.rover:
-            window.stop_all_motors()
-            window.rover.disconnect()
-                                  
-
-    def change_log_level(self, level: str) -> None:
-        """Change log level for both loggers"""
-        numeric_level = getattr(logging, level)
-        ui_logger.setLevel(numeric_level)
-        ecu_logger.setLevel(numeric_level)
-        ui_logger.info(f"Log level changed to {level}")
-
-if __name__ == '__main__':
-    app = QApplication(sys.argv)
-    
-    # Set application style for better appearance
-    app.setStyle('Fusion')
-    
-    window = MotorControlUI()
-    window.show()
-    
-    # Make sure to stop motors on exit
-    try:
-        sys.exit(app.exec_())
-    except SystemExit:
-        # Attempt to stop motors if the UI is closing
-        if window.connected and window.ecu_connector:
-            window.stop_all_motors()
-            window.ecu_connector.disconnect()
-    app = QApplication(sys.argv)
-    
-    # Set application style for better appearance
-    app.setStyle('Fusion')
-    
-    window = MotorControlUI()
-    window.show()
-    
-    # Make sure to stop motors on exit
-    try:
-        sys.exit(app.exec_())
-    except SystemExit:
-        # Attempt to stop motors if the UI is closing
-        if window.connected and window.rover:
-            window.stop_all_motors()
-            window.rover.disconnect()
