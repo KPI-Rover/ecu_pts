@@ -1,0 +1,59 @@
+@startuml
+participant "UI Thread" as UI
+participant "ECUConnector" as EC
+participant "Worker Thread" as WT
+participant "CommandQueue" as CQ
+participant "Transport" as T
+
+UI -> EC: start()
+activate EC
+EC -> WT: create & start
+activate WT
+WT -> WT: worker_loop()
+
+UI -> EC: set_motor_speed()
+activate EC
+EC -> CQ: push(command)
+EC -> EC: increment total_commands
+EC --> UI: return
+deactivate EC
+
+loop process queue
+    WT -> CQ: get next command
+    activate CQ
+    CQ --> WT: command
+    deactivate CQ
+
+    group timeout handling
+        WT -> T: send command
+        activate T
+        alt successful case
+            T --> WT: response
+            WT -> EC: command succeeded
+            EC -> UI: update status
+        else timeout or error
+            T --> WT: timeout/error
+            note right: Command timeout exceeded
+            WT -> EC: command failed
+            EC -> UI: error callback
+            EC -> EC: increment failed_commands
+        end
+        deactivate T
+    end
+end
+
+UI -> EC: get_command_stats()
+activate EC
+EC --> UI: return (total_commands, failed_commands)
+deactivate EC
+
+UI -> EC: stop()
+activate EC
+EC -> WT: signal stop
+WT -> WT: cleanup
+destroy WT
+EC --> UI: return
+deactivate EC
+
+@enduml
+@enduml
