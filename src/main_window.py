@@ -12,11 +12,20 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ECU PTS - Performance Testing Software")
         self.setMinimumSize(1200, 800)
         
+        # Create status bar
+        self.statusBar().showMessage("Not connected")
+        
         self.setup_ui()
         
         # Connect ECU connector to control panel if provided
         if self.ecu_connector_adapter:
             self.control.set_ecu_connector(self.ecu_connector_adapter)
+            # Also register adapter with dashboard so tabs can communicate
+            if hasattr(self, 'dashboard') and hasattr(self.dashboard, 'set_ecu_connector'):
+                self.dashboard.set_ecu_connector(self.ecu_connector_adapter)
+            
+            # Fix: Use the correct signal name
+            self.ecu_connector_adapter.encoderValuesUpdated.connect(self.on_encoder_values_updated)
         
     def setup_ui(self):
         """Setup the main UI layout with Dashboard and Control parts."""
@@ -37,6 +46,9 @@ class MainWindow(QMainWindow):
         # Control part (25% height)
         self.control = ControlPanel()
         splitter.addWidget(self.control)
+        
+        # Connect max RPM changes to dashboard
+        self.control.maxRpmChanged.connect(self.dashboard.on_max_rpm_changed)
         
         # Set initial sizes explicitly: Dashboard 75%, Control 25%
         # This will be calculated after the window is shown
@@ -66,8 +78,46 @@ class MainWindow(QMainWindow):
         """Handle ECU connector connection state changes."""
         if hasattr(self, 'control'):
             self.control.on_connection_state_changed(connected)
+        
+        if connected:
+            self.statusBar().showMessage("Connected to rover")
+        else:
+            self.statusBar().showMessage("Disconnected from rover")
             
     def on_error_occurred(self, error_message: str):
         """Handle ECU connector errors."""
         if hasattr(self, 'control'):
             self.control.on_error_occurred(error_message)
+        
+        self.statusBar().showMessage(f"Error: {error_message}", 5000)
+            
+    def on_encoder_values_updated(self, encoder_values: list):
+        """Handle encoder values updates emitted by adapter.
+
+        The `ECUConnectorAdapter.encoderValuesUpdated` signal emits a single
+        `list` containing encoder values. Compute context information (current
+        setpoints and time elapsed) and forward to the dashboard's
+        `update_chart_data` method.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"MainWindow.on_encoder_values_updated called with: {encoder_values}")
+        
+        # Get current setpoints from ECU connector adapter (includes joystick control)
+        if hasattr(self, 'ecu_connector_adapter'):
+            setpoints = self.ecu_connector_adapter.current_speeds.copy()
+        else:
+            setpoints = [0, 0, 0, 0]
+
+        # Compute time elapsed in seconds from adapter refresh interval
+        time_elapsed = 0.0
+        if hasattr(self, 'ecu_connector_adapter') and hasattr(self.ecu_connector_adapter, 'refresh_interval_ms'):
+            time_elapsed = self.ecu_connector_adapter.refresh_interval_ms / 1000.0
+
+        logger.info(f"Forwarding to dashboard: setpoints={setpoints}, encoder_values={encoder_values}, time_elapsed={time_elapsed}")
+        
+        # Forward to dashboard tab if available
+        if hasattr(self, 'dashboard'):
+            self.dashboard.update_chart_data(setpoints, encoder_values, time_elapsed)
+        else:
+            logger.warning("MainWindow has no dashboard attribute!")

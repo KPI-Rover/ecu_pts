@@ -63,6 +63,29 @@
 
 ## Dashboard Requirements
 
+**[REQ-022]** The Dashboard part must be a container for tabs with the following tabs implemented:
+   - PID Regulator tab: Provides interface for tuning and monitoring PID controller parameters
+
+### PID Regulator Tab Requirements
+
+**[REQ-023]** The PID Regulator tab must display a chart for each motor showing:
+   - Setpoint: Value from the corresponding motor slider
+   - Current value: RPM calculated based on encoder values read from ECU
+
+**[REQ-024]** The chart must include a legend with the following visual specifications:
+   - Dotted line for setpoint values
+   - Solid line for current values
+   - Different colors for each motor
+
+**[REQ-025]** The user must be able to select which motors to display on the chart using checkboxes, which can be combined with the legend for motor selection.
+
+**[REQ-026]** The software must periodically, together with sending motor speeds (REQ-018), read encoder values using the get_all_encoders command (as defined in protocol.md) to calculate current RPM values for the chart.
+
+**[REQ-027]** User should be able to change number of encoder ticks per one revolution for each motor separately. The default value is 260.
+
+**[REQ-028]** User should be able to scroll axis X on the PID Regulator chart.
+
+**[REQ-029]** User should be able to zoom in/out axis X on the PID Regulator chart.
 
 ## Non-Functional Requirements
 
@@ -149,20 +172,39 @@ The software is divided into three main components:
    - Common error handling across transports
 
 4. **Thread Safety**
-   - Command queue is thread-safe within ECUConnector
-   - Transport operations are synchronized
-   - UI updates handled in main thread
+   - Command queue is thread-safe within ECUConnector using locks and condition variables
+   - Transport operations are synchronized to prevent concurrent access
+   - UI updates handled in main thread only through Qt's signal/slot mechanism
+   - Data Management component uses thread-safe data structures for chart data storage
+   - ECU Connector worker thread is isolated from UI thread to prevent blocking
+   - All shared data access is protected with appropriate synchronization primitives
+   - Periodic operations (motor speed sending, encoder reading) are managed by dedicated timers in UI thread
 
 5. **Thread Management**
-   - ECUConnector manages its own worker thread
+   - ECUConnector manages its own worker thread with proper startup/shutdown handling
    - Thread-safe command queue handles inter-thread communication
-   - Clean shutdown handling on program exit
-   - UI remains responsive during long operations
+   - Clean shutdown handling on program exit with thread join operations
+   - UI remains responsive during long operations through asynchronous processing
+   - Worker thread exception handling prevents crashes from propagating to UI
 
 6. **Data Visualization**
    - Dashboard updates asynchronously from control operations
    - Efficient data buffering for smooth chart rendering
    - Configurable chart update rates independent of control refresh rate
+   - Chart data is updated in a thread-safe manner using Qt's signal/slot system
+
+7. **Synchronization Mechanisms**
+   - Qt Signals/Slots for thread-safe UI updates
+   - Mutex-protected command queues for producer-consumer patterns
+   - Atomic operations for simple state variables
+   - Event-driven architecture to avoid polling and reduce synchronization overhead
+   - Timeout mechanisms for network operations to prevent indefinite blocking
+
+8. **Error Propagation**
+   - Errors from worker thread are propagated to UI through callback mechanisms
+   - Network timeouts and connection failures are handled gracefully
+   - UI provides feedback for all error conditions without blocking the interface
+   - Logging system captures thread-specific errors for debugging
 
 
 

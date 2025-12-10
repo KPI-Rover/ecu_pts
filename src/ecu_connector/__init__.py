@@ -2,7 +2,6 @@ import logging
 
 # Setup package-level logger
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # Only add handlers if they haven't been added yet
 if not logger.handlers:
@@ -15,16 +14,19 @@ if not logger.handlers:
     logger.addHandler(console_handler)
 
     # Add file handler
-    file_handler = logging.FileHandler("ecu_connector.log")
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
+    try:
+        file_handler = logging.FileHandler("ecu_connector.log")
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    except Exception as e:
+        logger.warning(f"Could not create log file: {e}")
     
     # Prevent propagation to root logger to avoid duplicate messages
     logger.propagate = False
 
 from .connector import ECUConnector
 from .transport import ITransport, TCPTransport
-from .command import Command, Response
+from .command import Command, Response, GetAllEncodersCommand, SetAllMotorsSpeedCommand, SetMotorSpeedCommand
 from .queue import CommandQueue
 
 __all__ = [

@@ -25,6 +25,11 @@ To start the PyQt5-based motor control GUI application using a virtual environme
    ```
    pip install -r requirements.txt
    ```
+   
+   Note: If you encounter issues with PyQt6.QtCharts, you may need to install it separately:
+   ```
+   pip install PyQt6-Charts
+   ```
 
 5. Run the application script:
    ```

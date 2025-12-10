@@ -1,9 +1,13 @@
+import logging
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGroupBox, 
-                              QCheckBox, QSlider, QLabel, QLineEdit, QPushButton,
-                              QSpinBox)
-from PyQt6.QtCore import Qt, pyqtSignal
+                             QCheckBox, QSlider, QLabel, QLineEdit, QPushButton,
+                             QSpinBox)
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QPainter, QPen, QBrush
 
+
+# Setup module logger
+logger = logging.getLogger(__name__)
 
 class MotorSlider(QWidget):
     """Custom slider widget with value display and edit capability."""
@@ -144,6 +148,7 @@ class JoystickWidget(QWidget):
 
 class ControlPanel(QWidget):
     """Control panel with three sections: connection, sliders, and gamepad."""
+    maxRpmChanged = pyqtSignal(int)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -316,15 +321,35 @@ class ControlPanel(QWidget):
             return
             
         if self.connect_button.text() == "Connect":
+            # Disable button while connecting
+            self.connect_button.setEnabled(False)
+            self.connect_button.setText("Connecting...")
+            
             ip = self.ip_edit.text()
             port = self.port_spinbox.value()
-            success = self.ecu_connector.connect_to_rover(ip, port)
-            if success:
-                self.connect_button.setText("Disconnect")
+            
+            # Use single shot timer to not block UI
+            QTimer.singleShot(0, lambda: self.perform_connection(ip, port))
         else:
             self.ecu_connector.disconnect_from_rover()
             self.connect_button.setText("Connect")
+    
+    def perform_connection(self, ip, port):
+        """Perform the actual connection in a non-blocking way."""
+        try:
+            logger.info(f"Attempting to connect to {ip}:{port}")
+            success = self.ecu_connector.connect_to_rover(ip, port)
             
+            if not success:
+                self.connect_button.setText("Connect")
+                logger.warning(f"Failed to connect to {ip}:{port}")
+            
+        except Exception as e:
+            logger.error(f"Connection error: {str(e)}")
+            self.connect_button.setText("Connect")
+        finally:
+            self.connect_button.setEnabled(True)
+    
     def on_connection_state_changed(self, connected: bool):
         """Handle connection state changes from ECU connector."""
         if connected:
@@ -334,7 +359,14 @@ class ControlPanel(QWidget):
             
     def on_error_occurred(self, error_message: str):
         """Handle errors from ECU connector."""
-        # TODO: Display error in UI (status bar, message box, etc.)
+        # Display error in status bar if main window has one
+        parent = self.parent()
+        while parent and not hasattr(parent, 'statusBar'):
+            parent = parent.parent()
+        
+        if parent and hasattr(parent, 'statusBar'):
+            parent.statusBar().showMessage(f"Error: {error_message}", 5000)
+        
         print(f"ECU Error: {error_message}")
         
     def on_all_motors_changed(self, value):
@@ -342,31 +374,34 @@ class ControlPanel(QWidget):
         if self.all_same_checkbox.isChecked():
             for slider in self.motor_sliders:
                 slider.setValue(value)
-            # Send to ECU connector
+            # Store speeds - will be sent by periodic timer
             if self.ecu_connector:
                 speeds = [value] * 4
-                self.ecu_connector.set_all_motors_speed(speeds)
+                self.ecu_connector.current_speeds = speeds
                 
     def on_individual_motor_changed(self):
         """Handle individual motor slider changes."""
         if not self.all_same_checkbox.isChecked() and self.ecu_connector:
             speeds = [slider.value() for slider in self.motor_sliders]
-            self.ecu_connector.set_all_motors_speed(speeds)
+            # Store speeds - will be sent by periodic timer
+            self.ecu_connector.current_speeds = speeds
             
     def on_max_rpm_changed(self, value):
         """Update all slider ranges when max RPM changes."""
         self.all_motors_slider.set_range(-value, value)
         for slider in self.motor_sliders:
             slider.set_range(-value, value)
+        # Emit signal so dashboard can update chart Y-axis range
+        self.maxRpmChanged.emit(value)
             
     def on_stop_clicked(self):
         """Stop all motors by setting speeds to zero."""
         self.all_motors_slider.setValue(0)
         for slider in self.motor_sliders:
             slider.setValue(0)
-        # Send stop command to ECU
+        # Send IMMEDIATE stop command to ECU with highest priority
         if self.ecu_connector:
-            self.ecu_connector.set_all_motors_speed([0, 0, 0, 0])
+            self.ecu_connector.set_all_motors_speed([0, 0, 0, 0], immediate=True)
             
     def on_joystick_changed(self, x, y):
         """Handle joystick position changes."""
@@ -376,17 +411,27 @@ class ControlPanel(QWidget):
         if self.ecu_connector and self.ecu_connector.is_connected():
             max_rpm = self.max_rpm_spinbox.value()
             
-            # Differential drive calculation
+            # Differential drive calculation with reduced turn sensitivity
             forward = y * max_rpm
-            turn = x * max_rpm
+            turn = x * max_rpm * 0.5  # Reduce turn sensitivity for smoother control
             
             left_speed = int(forward - turn)
             right_speed = int(forward + turn)
             
-            # For 4-motor setup, assume left side = motors 0,2 and right side = motors 1,3
-            speeds = [left_speed, right_speed, left_speed, right_speed]
+            # Motor mapping: motors 0,1 = right side, motors 2,3 = left side
+            # (based on ECU configuration where motors 0,1 correspond to physical motors 3,4
+            # and motors 2,3 correspond to physical motors 1,2)
+            speeds = [right_speed, right_speed, left_speed, left_speed]
             
             # Clamp to max RPM range
             speeds = [max(-max_rpm, min(max_rpm, speed)) for speed in speeds]
             
             self.ecu_connector.set_all_motors_speed(speeds)
+            
+    def get_current_setpoints(self):
+        """Get current motor speed setpoints."""
+        if self.all_same_checkbox.isChecked():
+            value = self.all_motors_slider.value()
+            return [value] * 4
+        else:
+            return [slider.value() for slider in self.motor_sliders]
