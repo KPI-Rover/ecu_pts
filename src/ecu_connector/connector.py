@@ -4,7 +4,7 @@ import time
 from typing import List, Tuple, Callable, Optional
 
 from .transport import ITransport
-from .command import Command, GetApiVersionCommand, SetMotorSpeedCommand, SetAllMotorsSpeedCommand, Response, GetAllEncodersCommand
+from .command import Command, GetApiVersionCommand, SetMotorSpeedCommand, SetAllMotorsSpeedCommand, Response, GetAllEncodersCommand, ConnectUDPCommand
 from .queue import CommandQueue
 
 logger = logging.getLogger(__name__)
@@ -153,6 +153,14 @@ class ECUConnector:
         from .command import GetAllEncodersCommand
         command = GetAllEncodersCommand()
         logger.debug("Queueing GetAllEncodersCommand")
+        self._command_queue.push(command)
+
+    def connect_udp(self, port: int) -> None:
+        """Queue connect UDP command."""
+        if not self._running:
+            return
+        command = ConnectUDPCommand(port)
+        logger.debug(f"Queueing ConnectUDPCommand with port {port}")
         self._command_queue.push(command)
     
     def clear_queue(self) -> int:

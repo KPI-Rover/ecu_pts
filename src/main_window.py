@@ -26,6 +26,7 @@ class MainWindow(QMainWindow):
             
             # Fix: Use the correct signal name
             self.ecu_connector_adapter.encoderValuesUpdated.connect(self.on_encoder_values_updated)
+            self.ecu_connector_adapter.imuValuesUpdated.connect(self.on_imu_values_updated)
         
     def setup_ui(self):
         """Setup the main UI layout with Dashboard and Control parts."""
@@ -41,6 +42,7 @@ class MainWindow(QMainWindow):
         
         # Dashboard part (75% height)
         self.dashboard = DashboardPanel()
+        self.dashboard.startUdpRequested.connect(self.on_start_udp_requested)
         splitter.addWidget(self.dashboard)
         
         # Control part (25% height)
@@ -74,14 +76,19 @@ class MainWindow(QMainWindow):
                 dashboard_height = height - control_height
             self.splitter.setSizes([dashboard_height, control_height])
     
-    def on_connection_state_changed(self, connected: bool):
+    def on_connection_state_changed(self, connected: bool, udp_port: int = None):
         """Handle ECU connector connection state changes."""
         if hasattr(self, 'control'):
             self.control.on_connection_state_changed(connected)
         
         if connected:
-            self.statusBar().showMessage("Connected to rover")
+            self.udp_port = udp_port
+            if udp_port:
+                self.statusBar().showMessage(f"Connected to rover, UDP listening on port {udp_port}")
+            else:
+                self.statusBar().showMessage("Connected to rover")
         else:
+            self.udp_port = None
             self.statusBar().showMessage("Disconnected from rover")
             
     def on_error_occurred(self, error_message: str):
@@ -121,3 +128,17 @@ class MainWindow(QMainWindow):
             self.dashboard.update_chart_data(setpoints, encoder_values, time_elapsed)
         else:
             logger.warning("MainWindow has no dashboard attribute!")
+            
+    def on_imu_values_updated(self, imu_data: list):
+        """Handle IMU values updates."""
+        if hasattr(self, 'dashboard'):
+            self.dashboard.update_imu_data(imu_data)
+
+    def on_start_udp_requested(self):
+        """Handle request to start UDP server."""
+        if not self.ecu_connector_adapter or not hasattr(self, 'udp_port') or not self.udp_port:
+            self.statusBar().showMessage("Cannot start UDP: Not connected or no local port")
+            return
+            
+        self.statusBar().showMessage(f"Sending Connect UDP command with port {self.udp_port}...")
+        self.ecu_connector_adapter.ecu_connector.connect_udp(self.udp_port)

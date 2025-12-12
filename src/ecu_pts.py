@@ -1,6 +1,8 @@
 import sys
 import logging
 import socket
+import threading
+import struct
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import QTimer, QObject, pyqtSignal
 from main_window import MainWindow
@@ -14,9 +16,10 @@ logger = logging.getLogger(__name__)
 class ECUConnectorAdapter(QObject):
     """Adapter to bridge ECUConnector with Qt signals for UI integration."""
     
-    connectionStateChanged = pyqtSignal(bool)
+    connectionStateChanged = pyqtSignal(bool, int)  # connected, udp_port
     errorOccurred = pyqtSignal(str)
     encoderValuesUpdated = pyqtSignal(list)  # New signal for encoder values
+    imuValuesUpdated = pyqtSignal(list)  # IMU data: [imu_id, packet_num, values...]
     
     def __init__(self, ecu_connector: ECUConnector):
         super().__init__()
@@ -28,6 +31,11 @@ class ECUConnectorAdapter(QObject):
         self.timer.timeout.connect(self.on_timer_timeout)
         self.setup_callbacks()
         self.encoder_ticks_per_rev = [1328, 1328, 1328, 1328]  # Default ticks per revolution
+        
+        # UDP for IMU data
+        self.udp_socket = None
+        self.udp_thread = None
+        self.udp_running = False
         
     def setup_callbacks(self):
         """Setup callbacks to convert to Qt signals."""
@@ -85,8 +93,15 @@ class ECUConnectorAdapter(QObject):
         success = self.ecu_connector.connect(host, port)
         if success:
             self.ecu_connector.start()
-            self.connectionStateChanged.emit(True)
+            
+            # Get local port for UDP
+            local_port = self.ecu_connector._transport.get_local_port()
+            self.connectionStateChanged.emit(True, local_port)
             logger.info(f"Successfully connected to {host}:{port}")
+            
+            # Start UDP listener for IMU data
+            logger.info(f"Starting UDP listener on local port {local_port}")
+            self.start_udp_listener(local_port)
             
             # Start periodic updates
             self.timer.start(self.refresh_interval_ms)
@@ -116,8 +131,19 @@ class ECUConnectorAdapter(QObject):
     def disconnect_from_rover(self):
         """Disconnect from rover."""
         self.timer.stop()
+        
+        if self.is_connected():
+            # Send stop command to server (port 0)
+            logger.info("Sending stop UDP command to server")
+            self.ecu_connector.connect_udp(0)
+            
+            # Give the worker thread a chance to process the command
+            import time
+            time.sleep(0.2)
+            
+        self.stop_udp_listener()
         self.ecu_connector.disconnect()
-        self.connectionStateChanged.emit(False)
+        self.connectionStateChanged.emit(False, None)
         
     def is_connected(self) -> bool:
         """Check if connected."""
@@ -172,28 +198,68 @@ class ECUConnectorAdapter(QObject):
             # Use the get_all_encoders command from the connector directly
             self.ecu_connector.get_all_encoders()
     
-    def set_encoder_ticks_per_rev(self, motor_id: int, ticks: int):
-        """Set encoder ticks per revolution for a specific motor."""
-        if 0 <= motor_id < 4:
-            self.encoder_ticks_per_rev[motor_id] = ticks
-    
-    def get_encoder_ticks_per_rev(self, motor_id: int) -> int:
-        """Get encoder ticks per revolution for a specific motor."""
-        if 0 <= motor_id < 4:
-            return self.encoder_ticks_per_rev[motor_id]
-        return 1328  # Default
-    
-    def calculate_rpm_from_encoder(self, motor_id: int, encoder_value: int, time_interval_ms: int) -> float:
-        """Calculate RPM from encoder value change."""
-        # This is a simplified calculation
-        # In real implementation, you would track previous values and times
-        ticks_per_rev = self.encoder_ticks_per_rev[motor_id]
-        if ticks_per_rev <= 0:
-            return 0.0
+    def start_udp_listener(self, local_port: int):
+        """Start UDP listener for IMU data on the given port."""
+        if self.udp_running:
+            return
         
-        # Convert to RPM: (encoder_value / ticks_per_rev) * (60000 / time_interval_ms)
-        # This is a placeholder calculation - actual implementation would track delta values
-        return (encoder_value / ticks_per_rev) * (60000 / time_interval_ms)
+        try:
+            self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.udp_socket.bind(('0.0.0.0', local_port))
+            self.udp_socket.settimeout(0.1)  # Short timeout for Qt integration
+            self.udp_running = True
+            self.udp_thread = threading.Thread(target=self.udp_listener_loop)
+            self.udp_thread.daemon = True
+            self.udp_thread.start()
+            logger.info(f"Started UDP listener on port {local_port}")
+        except Exception as e:
+            logger.error(f"Failed to start UDP listener: {e}")
+            self.errorOccurred.emit(f"Failed to start UDP listener: {e}")
+    
+    def udp_listener_loop(self):
+        """UDP listener loop for IMU data."""
+        while self.udp_running:
+            try:
+                data, addr = self.udp_socket.recvfrom(1024)
+                logger.info(f"Received UDP data from {addr}: {data.hex()}")
+                self.parse_imu_packet(data)
+            except socket.timeout:
+                continue
+            except Exception as e:
+                if self.udp_running:
+                    logger.error(f"UDP listener error: {e}")
+    
+    def parse_imu_packet(self, data: bytes):
+        """Parse IMU packet from UDP data."""
+        if len(data) < 3:
+            return
+        
+        imu_id = data[0]
+        packet_num = struct.unpack('!H', data[1:3])[0]  # uint16_t network order
+        
+        values = []
+        offset = 3
+        while offset + 3 < len(data):
+            # Each float is sent as uint32_t in network order
+            value_bytes = data[offset:offset+4]
+            if len(value_bytes) == 4:
+                uint32 = struct.unpack('!I', value_bytes)[0]
+                # Convert back to float
+                float_value = struct.unpack('f', struct.pack('I', uint32))[0]
+                values.append(float_value)
+            offset += 4
+        
+        logger.info(f"Parsed IMU: id={imu_id}, packet={packet_num}, values={values}")
+        self.imuValuesUpdated.emit([imu_id, packet_num] + values)
+    
+    def stop_udp_listener(self):
+        """Stop UDP listener."""
+        self.udp_running = False
+        if self.udp_thread:
+            self.udp_thread.join(timeout=1.0)
+        if self.udp_socket:
+            self.udp_socket.close()
+            self.udp_socket = None
 
 
 class ECUPTSApplication:
@@ -240,6 +306,9 @@ class ECUPTSApplication:
         )
         self.ecu_connector_adapter.encoderValuesUpdated.connect(
             self.main_window.on_encoder_values_updated
+        )
+        self.ecu_connector_adapter.imuValuesUpdated.connect(
+            self.main_window.on_imu_values_updated
         )
 
     def run(self):

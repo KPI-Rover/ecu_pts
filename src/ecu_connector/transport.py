@@ -34,6 +34,7 @@ class TCPTransport(ITransport):
         self._timeout = 2.0  # Increased timeout to 2.0 seconds
         self._host = None
         self._port = None
+        self._local_port = None
     
     def connect(self, host: str, port: int) -> bool:
         try:
@@ -65,7 +66,8 @@ class TCPTransport(ITransport):
                 return False
             
             self._connected = True
-            logger.info(f"Successfully connected to {host}:{port}")
+            self._local_port = self._socket.getsockname()[1]
+            logger.info(f"Successfully connected to {host}:{port}, local port: {self._local_port}")
             return True
         except Exception as e:
             logger.error(f"Failed to connect to {host}:{port}: {str(e)}")
@@ -187,26 +189,6 @@ class TCPTransport(ITransport):
             self._connected = False
             return None
 
-    def receive_available(self) -> Optional[bytes]:
-        """Return any immediately-available bytes from the socket (non-blocking).
-
-        This is a best-effort helper used by higher-level code to recover
-        from protocol stream patterns where payloads may arrive without a
-        leading command id. It will attempt a non-blocking recv and return
-        whatever bytes are available, or None on error.
-        """
-        if not self.is_connected():
-            return None
-
-        try:
-            # Use non-blocking peek to see if data is available
-            data = self._socket.recv(4096, socket.MSG_DONTWAIT)
-            if data:
-                logger.debug(f"receive_available: got {len(data)} bytes: {' '.join(f'{b:02x}' for b in data)}")
-                return data
-            return b''
-        except BlockingIOError:
-            return b''
-        except Exception as e:
-            logger.debug(f"receive_available error: {e}")
-            return None
+    def get_local_port(self) -> Optional[int]:
+        """Get the local port used for the connection."""
+        return self._local_port

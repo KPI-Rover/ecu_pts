@@ -207,3 +207,26 @@ class GetAllEncodersCommand(Command):
         except Exception as e:
             logger.error(f"Error in GetAllEncodersCommand: {str(e)}")
             return Response(False, error_message=f"Error in GetAllEncodersCommand: {str(e)}")
+
+class ConnectUDPCommand(Command):
+    def __init__(self, port: int):
+        super().__init__()
+        self.port = port
+
+    def execute(self, transport: ITransport) -> Response:
+        logger.debug(f"Sending Connect UDP command with port {self.port}")
+        # Command ID 0x06, followed by 4 bytes port (big-endian)
+        payload = struct.pack('>I', self.port)
+        if not transport.send(bytes([0x06]) + payload):
+            return Response(False, error_message="Failed to send Connect UDP command")
+        
+        # Expect response: 0x06 + status (1 byte)
+        response = transport.receive(2)
+        if not response or len(response) != 2:
+             return Response(False, error_message="Failed to receive Connect UDP response")
+        
+        if response[0] != 0x06:
+             return Response(False, error_message=f"Unexpected command ID in response: {response[0]}")
+             
+        success = response[1] == 1
+        return Response(success)

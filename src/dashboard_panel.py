@@ -1,11 +1,12 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget, QHBoxLayout, QGroupBox, QCheckBox, QLabel, QSpinBox, QSplitter, QFileDialog, QPushButton, QProgressBar, QComboBox
 from PyQt6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QDateTimeAxis
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QDateTime
-from PyQt6.QtGui import QPen, QColor
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QDateTime, QRectF, QPointF
+from PyQt6.QtGui import QPen, QColor, QPainter, QBrush, QPolygonF
 import pyqtgraph as pg  # For better chart performance
 import numpy as np
 import re
 import logging
+import math
 
 
 class PIDRegulatorTab(QWidget):
@@ -541,9 +542,306 @@ class LogPIDTab(QWidget):
             self.pwm_curves[i].setData([], [])
 
 
+class ArtificialHorizon(QWidget):
+    """Artificial Horizon widget to display pitch and roll."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.pitch = 0.0  # Degrees
+        self.roll = 0.0   # Degrees
+        self.setMinimumSize(200, 200)
+        
+    def set_attitude(self, pitch, roll):
+        """Set pitch and roll in degrees."""
+        self.pitch = pitch
+        self.roll = roll
+        self.update()
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        width = self.width()
+        height = self.height()
+        center_x = width / 2
+        center_y = height / 2
+        radius = min(width, height) / 2 - 10
+        
+        # Clip to circle
+        # path = QPainter(self).window() # Dummy path
+        # Actually, let's just draw a circle background
+        
+        painter.translate(center_x, center_y)
+        
+        # Rotate for roll
+        painter.rotate(-self.roll)
+        
+        # Pitch displacement (approximate pixels per degree)
+        pitch_pixels = self.pitch * (radius / 45.0) # 45 degrees = radius
+        
+        # Draw Sky
+        painter.setBrush(QBrush(QColor(100, 150, 255))) # Sky Blue
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRect(int(-width), int(-height - pitch_pixels), int(2*width), int(height))
+        
+        # Draw Ground
+        painter.setBrush(QBrush(QColor(100, 50, 0))) # Brown
+        painter.drawRect(int(-width), int(0 - pitch_pixels), int(2*width), int(height))
+        
+        # Draw Horizon Line
+        painter.setPen(QPen(Qt.GlobalColor.white, 2))
+        painter.drawLine(int(-width), int(-pitch_pixels), int(width), int(-pitch_pixels))
+        
+        # Reset rotation for fixed elements
+        painter.rotate(self.roll)
+        
+        # Draw fixed aircraft reference
+        painter.setPen(QPen(Qt.GlobalColor.yellow, 3))
+        # Left wing
+        painter.drawLine(-40, 0, -10, 0)
+        painter.drawLine(-10, 0, -10, 10)
+        # Right wing
+        painter.drawLine(10, 0, 40, 0)
+        painter.drawLine(10, 0, 10, 10)
+        # Center dot
+        painter.drawPoint(0, 0)
+        
+        # Draw border
+        painter.setPen(QPen(Qt.GlobalColor.black, 4))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(int(-radius), int(-radius), int(2*radius), int(2*radius))
+
+class CompassWidget(QWidget):
+    """Compass widget to display heading."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.heading = 0.0  # Degrees
+        self.setMinimumSize(200, 200)
+        
+    def set_heading(self, heading):
+        """Set heading in degrees."""
+        self.heading = heading
+        self.update()
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        width = self.width()
+        height = self.height()
+        center_x = width / 2
+        center_y = height / 2
+        radius = min(width, height) / 2 - 10
+        
+        painter.translate(center_x, center_y)
+        
+        # Draw compass rose
+        painter.setPen(QPen(Qt.GlobalColor.black, 2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(int(-radius), int(-radius), int(2*radius), int(2*radius))
+        
+        # Draw ticks and labels
+        for i in range(0, 360, 30):
+            painter.save()
+            painter.rotate(i - self.heading)
+            
+            if i % 90 == 0:
+                # Major cardinal points
+                painter.drawLine(0, int(-radius), 0, int(-radius + 15))
+                
+                # Draw text
+                label = ""
+                if i == 0: label = "N"
+                elif i == 90: label = "E"
+                elif i == 180: label = "S"
+                elif i == 270: label = "W"
+                
+                painter.translate(0, -radius + 25)
+                painter.rotate(-(i - self.heading)) # Rotate text back to be upright
+                font = painter.font()
+                font.setBold(True)
+                font.setPointSize(12)
+                painter.setFont(font)
+                
+                # Center text
+                fm = painter.fontMetrics()
+                text_width = fm.horizontalAdvance(label)
+                text_height = fm.height()
+                painter.drawText(int(-text_width/2), int(text_height/4), label)
+                
+            else:
+                # Minor ticks
+                painter.drawLine(0, int(-radius), 0, int(-radius + 8))
+                
+            painter.restore()
+            
+        # Draw fixed heading indicator (triangle at top)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(Qt.GlobalColor.red))
+        triangle = QPolygonF([
+            QPointF(0, -radius - 5),
+            QPointF(-10, -radius - 20),
+            QPointF(10, -radius - 20)
+        ])
+        painter.drawPolygon(triangle)
+        
+        # Draw current heading text in center
+        painter.setPen(QPen(Qt.GlobalColor.black))
+        font = painter.font()
+        font.setPointSize(16)
+        painter.setFont(font)
+        heading_str = f"{int(self.heading)}°"
+        fm = painter.fontMetrics()
+        text_width = fm.horizontalAdvance(heading_str)
+        painter.drawText(int(-text_width/2), 5, heading_str)
+
+class IMUTab(QWidget):
+    """IMU Data tab with real-time IMU sensor values."""
+    
+    startUdpRequested = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.imu_data = []  # List of [imu_id, packet_num, val1, val2, ...]
+        self.max_points = 100  # Maximum points to keep
+        self.setup_ui()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # Controls
+        controls_layout = QHBoxLayout()
+        self.start_udp_btn = QPushButton("Start Odometry UDP server")
+        self.start_udp_btn.clicked.connect(self.on_start_udp_clicked)
+        controls_layout.addWidget(self.start_udp_btn)
+        controls_layout.addStretch()
+        layout.addLayout(controls_layout)
+
+        # Splitter for Horizon and Chart
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        
+        # Top part: Artificial Horizon and Text Data
+        top_widget = QWidget()
+        top_layout = QHBoxLayout(top_widget)
+        
+        self.horizon = ArtificialHorizon()
+        top_layout.addWidget(self.horizon)
+        
+        self.compass = CompassWidget()
+        top_layout.addWidget(self.compass)
+        
+        # IMU data display (Text)
+        # self.imu_label = QLabel("IMU Data: Waiting for data...")
+        # self.imu_label.setStyleSheet("font-family: monospace; font-size: 12px;")
+        # self.imu_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        # top_layout.addWidget(self.imu_label)
+        
+        splitter.addWidget(top_widget)
+        
+        # Bottom part: Chart
+        self.setup_chart()
+        splitter.addWidget(self.chart_widget)
+        
+        layout.addWidget(splitter)
+    
+    def on_start_udp_clicked(self):
+        self.startUdpRequested.emit()
+        self.start_udp_btn.setEnabled(False)  # Disable button after click
+        self.start_udp_btn.setText("UDP Server Requested")
+        
+    def setup_chart(self):
+        """Setup chart for IMU values."""
+        self.chart_widget = pg.PlotWidget()
+        self.chart_widget.setBackground('w')
+        self.chart_widget.setTitle("IMU Accelerometer Values")
+        self.chart_widget.setLabel('left', 'Value')
+        self.chart_widget.setLabel('bottom', 'Packet Number')
+        
+        # Create curves for different IMU values (only accel x,y,z)
+        self.imu_curves = []
+        colors = ['red', 'green', 'blue']
+        names = ['Accel X', 'Accel Y', 'Accel Z']
+        
+        for i in range(3):
+            curve = self.chart_widget.plot(pen=pg.mkPen(color=colors[i], width=2), name=names[i])
+            self.imu_curves.append(curve)
+        
+        self.chart_widget.addLegend()
+        
+    def update_data(self, imu_data: list):
+        """Update IMU data display."""
+        if not imu_data or len(imu_data) < 3:
+            return
+        
+        imu_id, packet_num = imu_data[0], imu_data[1]
+        values = imu_data[2:]
+        
+        # Update label
+        values_str = ', '.join(f"{v:.3f}" for v in values)
+        # self.imu_label.setText(f"IMU ID: {imu_id}\nPacket: {packet_num}\nValues: [{values_str}]")
+        
+        # Update Artificial Horizon if quaternion data is available
+        # Data format: ID, PacketNum, Accel(3), Gyro(3), Quat(4)
+        # Quat indices in values list: 6, 7, 8, 9 (since values starts at index 2 of imu_data)
+        if len(values) >= 10:
+            w = values[6]
+            x = values[7]
+            y = values[8]
+            z = values[9]
+            
+            # Convert Quaternion to Euler Angles (Roll, Pitch)
+            # Roll (x-axis rotation)
+            sinr_cosp = 2 * (w * y + x * z)
+            cosr_cosp = 1 - 2 * (y * y + x * x)
+            roll = math.atan2(sinr_cosp, cosr_cosp)
+            
+            # Pitch (y-axis rotation)
+            sinp = 2 * (w * x - z * y)
+            if abs(sinp) >= 1:
+                pitch = math.copysign(math.pi / 2, sinp) # use 90 degrees if out of range
+            else:
+                pitch = math.asin(sinp)
+                
+            # Convert to degrees
+            roll_deg = math.degrees(roll)
+            pitch_deg = math.degrees(pitch)
+            
+            self.horizon.set_attitude(pitch_deg, roll_deg)
+            
+            # Yaw (z-axis rotation)
+            siny_cosp = 2 * (w * z + x * y)
+            cosy_cosp = 1 - 2 * (y * y + z * z)
+            yaw = math.atan2(siny_cosp, cosy_cosp)
+            yaw_deg = math.degrees(yaw)
+            
+            # Normalize to 0-360
+            if yaw_deg < 0:
+                yaw_deg += 360
+                
+            self.compass.set_heading(yaw_deg)
+        
+        # Store data
+        self.imu_data.append(imu_data)
+        if len(self.imu_data) > self.max_points:
+            self.imu_data.pop(0)
+        
+        # Update chart
+        if len(self.imu_data) > 0:
+            packet_nums = [d[1] for d in self.imu_data]
+            for i in range(3):
+                if i < len(values):
+                    vals = [d[2+i] if len(d) > 2+i else 0 for d in self.imu_data]
+                    self.imu_curves[i].setData(packet_nums, vals)
+                else:
+                    self.imu_curves[i].setData([], [])
+
+
 class DashboardPanel(QWidget):
     """Dashboard panel with tabbed interface."""
     
+    startUdpRequested = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setup_ui()
@@ -559,11 +857,20 @@ class DashboardPanel(QWidget):
         self.pid_tab = PIDRegulatorTab()
         self.tab_widget.addTab(self.pid_tab, "PID Regulator")
         
+        # IMU Data tab
+        self.imu_tab = IMUTab()
+        self.imu_tab.startUdpRequested.connect(self.startUdpRequested.emit)
+        self.tab_widget.addTab(self.imu_tab, "IMU Data")
+        
         # Log PID Analysis tab
         self.log_pid_tab = LogPIDTab()
         self.tab_widget.addTab(self.log_pid_tab, "Log PID Analysis")
         
         layout.addWidget(self.tab_widget)
+        
+    def update_imu_data(self, imu_data: list):
+        """Update IMU data display."""
+        self.imu_tab.update_data(imu_data)
         
     def update_chart_data(self, setpoints, encoder_values, time_elapsed):
         """Update PID regulator chart with new data."""
