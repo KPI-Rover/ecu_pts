@@ -1,62 +1,41 @@
-# Test application for chassis controller
+# ECU PTS - Performance Testing Software (C++)
 
 ## Starting the Application
 
-To start the PyQt5-based motor control GUI application using a virtual environment:
+To start the Qt6-based motor control GUI application:
 
 1. Navigate to the project root directory (`/home/holy/prj/kpi-rover/ecu_pts`).
 
-2. Create a virtual environment (if not already created):
+2. Build the C++ application:
    ```
-   python -m venv venv
-   ```
-
-3. Activate the virtual environment:
-   - On Linux/Mac:
-     ```
-     source venv/bin/activate
-     ```
-   - On Windows:
-     ```
-     venv\Scripts\activate
-     ```
-
-4. Install required dependencies from the requirements file:
-   ```
-   pip install -r requirements.txt
-   ```
-   
-   Note: If you encounter issues with PyQt6.QtCharts, you may need to install it separately:
-   ```
-   pip install PyQt6-Charts
+   mkdir build
+   cd build
+   cmake ..
+   make
    ```
 
-5. Run the application script:
+3. Run the application:
    ```
-   python src/ecu_pts.py
-   ```
-
-   This will launch the GUI window for controlling the rover motors. Ensure the rover is accessible at the configured IP and port (default: 10.30.30.30:6000).
-
-6. After use, deactivate the virtual environment:
-   ```
-   deactivate
+   ./ecu_pts_cpp
    ```
 
-## Running Unit Tests
+   This will launch the GUI window for controlling the rover motors. Ensure the rover is accessible at the configured serial port (default: /dev/ttyUSB0 at 115200 baud).
 
-To run the unit tests for the ECU connector module:
+## Features
 
-1. Ensure you have pytest installed. If not, install it using pip:
-   ```
-   pip install -r requirements.txt
-   ```
+- Serial communication with ECU
+- Motor speed control with sliders
+- Real-time RPM monitoring via charts
+- Configurable encoder ticks per revolution
+- Max RPM limits for control and display
 
-2. Navigate to the project root directory (`/home/holy/prj/kpi-rover/ecu_pts`).
+## Requirements
 
-3. Run the tests using pytest:
-   ```
-   pytest tests/test_ecu_connector.py
-   ```
+- Qt6 (with Charts)
+- CMake
+- C++17 compiler
+- Linux environment
 
-   This will execute all test cases in `test_ecu_connector.py`, providing output on passed/failed tests. For verbose output, add the `-v` flag: `pytest -v tests/test_ecu_connector.py`.
+
+
+
