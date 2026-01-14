@@ -14,6 +14,7 @@ MainWindow::MainWindow(QWidget *parent)
     SetupUi();
     
     setWindowTitle("ECU PTS - Performance Testing Software (C++)");
+    setWindowIcon(QIcon(":/kpi_rover_logo.png"));
     resize(1200, 800);
     
     connect(connector_, &ECUConnector::ConnectionChanged, this, [this](bool connected){
@@ -25,6 +26,22 @@ MainWindow::MainWindow(QWidget *parent)
     });
     
     statusBar()->showMessage("Not connected");
+}
+
+void MainWindow::OnProtocolTesterTabActivated(bool activated) {
+    if (activated) {
+        // Stop periodic updates
+        controlPanel_->SetPeriodicUpdatesEnabled(false);
+        
+        // Send stop motors command
+        if (connector_->IsConnected()) {
+            std::vector<int> stopSpeeds(4, 0);
+            connector_->SetAllMotorsSpeed(stopSpeeds);
+        }
+    } else {
+        // Resume periodic updates
+        controlPanel_->SetPeriodicUpdatesEnabled(true);
+    }
 }
 
 MainWindow::~MainWindow() {
@@ -42,6 +59,8 @@ void MainWindow::SetupUi() {
     
     connect(controlPanel_, &ControlPanel::MaxRpmChanged, dashboardPanel_, &DashboardPanel::SetMaxRpm);
     dashboardPanel_->SetMaxRpm(controlPanel_->GetMaxRpm());
+    
+    connect(dashboardPanel_, &DashboardPanel::ProtocolTesterTabActivated, this, &MainWindow::OnProtocolTesterTabActivated);
     
     // 75% / 25% split
     splitter_->setStretchFactor(0, 3);

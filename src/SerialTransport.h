@@ -5,6 +5,7 @@
 #include <termios.h>
 #include <thread>
 #include <vector>
+#include <functional>
 
 #include "CircularBuffer.h"
 #include "ThreadSafeQueue.h"
@@ -13,6 +14,9 @@ class SerialTransport {
  public:
   SerialTransport(const std::string& port, int baud);
   ~SerialTransport();
+
+  using LogCallback = std::function<void(const std::vector<uint8_t>&, bool isTx)>;
+  void SetLogCallback(LogCallback cb) { log_cb_ = cb; }
 
   void Start();
   void Stop();
@@ -37,4 +41,5 @@ class SerialTransport {
   CircularBuffer input_buffer_;
   ThreadSafeQueue<std::vector<uint8_t>> input_queue_;
   ThreadSafeQueue<std::vector<uint8_t>> output_queue_;
+  LogCallback log_cb_;
 };

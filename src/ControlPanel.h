@@ -10,6 +10,7 @@
 #include <QTimer>
 #include <vector>
 
+class VirtualJoystick;
 class ECUConnector;
 
 class ControlPanel : public QWidget {
@@ -17,6 +18,7 @@ class ControlPanel : public QWidget {
 public:
     explicit ControlPanel(ECUConnector* connector, QWidget *parent = nullptr);
     int GetMaxRpm() const;
+    void SetPeriodicUpdatesEnabled(bool enabled);
 
 signals:
     void MaxRpmChanged(int value);
@@ -30,6 +32,7 @@ private slots:
     void OnStopClicked();
     void OnPeriodChanged(int val);
     void OnMaxRpmChanged(int value);
+    void OnJoystickPositionChanged(double x, double y);
 
 private:
     void SetupUi();
@@ -49,6 +52,8 @@ private:
     QCheckBox* allSameCheck_;
     std::vector<QSlider*> motorSliders_;
     std::vector<QSpinBox*> motorSpins_;
+    
+    VirtualJoystick* joystick_;
     
     QTimer* updateTimer_;
     std::vector<int> currentSpeeds_;

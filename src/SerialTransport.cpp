@@ -271,6 +271,7 @@ void SerialTransport::Send(std::vector<uint8_t> data) {
   frame.push_back((crc >> 8) & 0xFF);
 
   output_queue_.Push(frame);
+  if (log_cb_) log_cb_(frame, true);
 }
 
 bool SerialTransport::Read(std::vector<uint8_t>& payload) {
@@ -337,6 +338,7 @@ void SerialTransport::ProcessBuffer() {
     uint16_t calculated_crc = CalculateCrc16(&frame[1], len_byte - 2);
 
     if (received_crc == calculated_crc) {
+      if (log_cb_) log_cb_(frame, false);
       std::vector<uint8_t> payload;
       if (len_byte > 3) {
         payload.assign(frame.begin() + 2, frame.end() - 2);

@@ -7,10 +7,24 @@
 #include <QCheckBox>
 #include <QSpinBox>
 #include <QTabWidget>
+#include <QScrollBar>
 #include <vector>
 
 class ECUConnector;
 class ProtocolTestPanel;
+class IMUPanel;
+
+class ZoomableChartView : public QChartView {
+    Q_OBJECT
+public:
+    explicit ZoomableChartView(QWidget *parent = nullptr);
+    
+signals:
+    void viewChanged();
+
+protected:
+    void wheelEvent(QWheelEvent *event) override;
+};
 
 class DashboardPanel : public QWidget {
     Q_OBJECT
@@ -21,28 +35,37 @@ public:
 public slots:
     void SetMaxRpm(int value);
 
+signals:
+    void ProtocolTesterTabActivated(bool activated);
+
 private slots:
     void OnEncoderDataReceived(const std::vector<float>& encoders);
     void OnMotorSelectionChanged();
     void OnAutoScrollChanged(int state);
     void OnTicksChanged(int val);
+    void OnScrollBarChanged(int value);
+    void OnTabChanged(int index);
 
 private:
     void SetupUi();
     void SetupChart();
+    void UpdateScrollBar();
+    void SyncScrollBarToAxis();
 
     ECUConnector* connector_;
     
     QTabWidget* tabWidget_;
     QWidget* chartTab_;
     ProtocolTestPanel* protocolTab_;
+    IMUPanel* imuTab_;
     
     QCheckBox* motorChecks_[4];
     QCheckBox* autoScrollCheck_;
     QSpinBox* ticksSpin_;
     
     QChart* chart_;
-    QChartView* chartView_;
+    ZoomableChartView* chartView_;
+    QScrollBar* chartScrollBar_;
     QValueAxis* axisX_;
     QValueAxis* axisY_;
     

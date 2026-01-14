@@ -1,4 +1,5 @@
 #include "ControlPanel.h"
+#include "VirtualJoystick.h"
 #include "ECUConnector.h"
 
 #include <QVBoxLayout>
@@ -43,7 +44,7 @@ void ControlPanel::SetupUi() {
     periodLayout->addWidget(new QLabel("Period (ms):"));
     periodSpin_ = new QSpinBox();
     periodSpin_->setRange(10, 1000);
-    periodSpin_->setValue(50);
+    periodSpin_->setValue(100);
     periodSpin_->setSingleStep(10);
     connect(periodSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, &ControlPanel::OnPeriodChanged);
     periodLayout->addWidget(periodSpin_);
@@ -63,7 +64,7 @@ void ControlPanel::SetupUi() {
     connLayout->addWidget(connectButton_);
     connLayout->addStretch();
     
-    mainLayout->addWidget(connGroup, 1);
+    mainLayout->addWidget(connGroup);
     
     // Sliders Group
     QGroupBox* slidersGroup = new QGroupBox("Motor Control");
@@ -119,7 +120,17 @@ void ControlPanel::SetupUi() {
     connect(stopButton, &QPushButton::clicked, this, &ControlPanel::OnStopClicked);
     slidersLayout->addWidget(stopButton);
     
-    mainLayout->addWidget(slidersGroup, 4);
+    mainLayout->addWidget(slidersGroup);
+    
+    // Gamepad Group
+    QGroupBox* gamepadGroup = new QGroupBox("Gamepad/Joystick Control");
+    QVBoxLayout* gamepadLayout = new QVBoxLayout(gamepadGroup);
+    
+    joystick_ = new VirtualJoystick();
+    connect(joystick_, &VirtualJoystick::positionChanged, this, &ControlPanel::OnJoystickPositionChanged);
+    gamepadLayout->addWidget(joystick_);
+    
+    mainLayout->addWidget(gamepadGroup);
     
     // Initialize ranges
     OnMaxRpmChanged(maxRpmSpin_->value());
@@ -172,6 +183,7 @@ void ControlPanel::OnTimerTimeout() {
     if (connector_->IsConnected()) {
         connector_->SetAllMotorsSpeed(currentSpeeds_);
         connector_->GetAllEncoders();
+        connector_->GetImu();
     }
 }
 
@@ -202,4 +214,43 @@ void ControlPanel::OnMaxRpmChanged(int value) {
     }
     
     emit MaxRpmChanged(value);
+}
+
+void ControlPanel::OnJoystickPositionChanged(double x, double y) {
+    // Differential drive: y = forward/back, x = turn
+    // Left motors (M1, M2): -y + x, Right motors (M3, M4): -y - x
+    // (negate y because up on joystick should be forward)
+    int maxRpm = maxRpmSpin_->value();
+    int leftSpeed = static_cast<int>((-y + x) * maxRpm);
+    int rightSpeed = static_cast<int>((-y - x) * maxRpm);
+    
+    // Clamp to range
+    leftSpeed = qBound(-maxRpm, leftSpeed, maxRpm);
+    rightSpeed = qBound(-maxRpm, rightSpeed, maxRpm);
+    
+    // Motors: M1,M2 = left side, M3,M4 = right side
+    currentSpeeds_[0] = leftSpeed;  // M1
+    currentSpeeds_[1] = leftSpeed;  // M2
+    currentSpeeds_[2] = rightSpeed; // M3
+    currentSpeeds_[3] = rightSpeed; // M4
+    
+    // Update sliders to reflect
+    allSameCheck_->setChecked(false); // Individual mode
+    for (int i = 0; i < 4; ++i) {
+        motorSliders_[i]->blockSignals(true);
+        motorSliders_[i]->setValue(currentSpeeds_[i]);
+        motorSliders_[i]->blockSignals(false);
+    }
+    
+    // Motor speeds will be sent by the periodic timer
+}
+
+void ControlPanel::SetPeriodicUpdatesEnabled(bool enabled) {
+    if (enabled) {
+        if (connector_->IsConnected()) {
+            updateTimer_->start(periodSpin_->value());
+        }
+    } else {
+        updateTimer_->stop();
+    }
 }

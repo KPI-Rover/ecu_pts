@@ -1,6 +1,7 @@
 #include "DashboardPanel.h"
 #include "ECUConnector.h"
 #include "ProtocolTestPanel.h"
+#include "IMUPanel.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -8,6 +9,39 @@
 #include <QLabel>
 #include <QDateTime>
 #include <QDebug>
+#include <QWheelEvent>
+#include <limits>
+
+ZoomableChartView::ZoomableChartView(QWidget *parent)
+    : QChartView(parent) {
+}
+
+void ZoomableChartView::wheelEvent(QWheelEvent *event) {
+    if (event->modifiers() & Qt::ControlModifier) {
+        // Ctrl + wheel: Zoom in/out on X-axis only
+        qreal factor = (event->angleDelta().y() > 0) ? 0.8 : 1.25; // Zoom in/out
+        
+        QRectF rect = chart()->plotArea();
+        QPointF center = chart()->mapToValue(event->position(), chart()->series().first());
+        
+        qreal newWidth = rect.width() * factor;
+        qreal left = center.x() - (center.x() - rect.left()) * factor;
+        
+        chart()->zoomIn(QRectF(left, rect.top(), newWidth, rect.height()));
+        emit viewChanged();
+        event->accept();
+    } else {
+        // Mouse wheel: Scroll X-axis horizontally
+        qreal delta = -event->angleDelta().y() * 0.5; // Adjust scroll speed
+        
+        QRectF rect = chart()->plotArea();
+        qreal newLeft = rect.left() + delta;
+        
+        chart()->zoomIn(QRectF(newLeft, rect.top(), rect.width(), rect.height()));
+        emit viewChanged();
+        event->accept();
+    }
+}
 
 DashboardPanel::DashboardPanel(ECUConnector* connector, QWidget *parent)
     : QWidget(parent), connector_(connector), lastEncoders_(4, 0), startTime_(0) {
@@ -75,15 +109,31 @@ void DashboardPanel::SetupUi() {
     chartLayout->addWidget(controlsGroup);
     
     // Chart View
-    chartView_ = new QChartView();
+    chartView_ = new ZoomableChartView();
     chartView_->setRenderHint(QPainter::Antialiasing);
+    chartView_->setRubberBand(QChartView::HorizontalRubberBand); // Enable horizontal scrolling
+    connect(chartView_, &ZoomableChartView::viewChanged, this, &DashboardPanel::SyncScrollBarToAxis);
     chartLayout->addWidget(chartView_);
+    
+    // Scroll bar for X-axis
+    chartScrollBar_ = new QScrollBar(Qt::Horizontal);
+    chartScrollBar_->setRange(0, 1000); // Will be updated dynamically
+    chartScrollBar_->setValue(1000); // Start at the end
+    connect(chartScrollBar_, &QScrollBar::valueChanged, this, &DashboardPanel::OnScrollBarChanged);
+    chartScrollBar_->hide(); // Hidden by default since auto-scroll is enabled
+    chartLayout->addWidget(chartScrollBar_);
     
     tabWidget_->addTab(chartTab_, "PID Regulator");
     
     // Protocol Test Tab
     protocolTab_ = new ProtocolTestPanel(connector_);
     tabWidget_->addTab(protocolTab_, "Protocol Tester");
+
+    // IMU Tab
+    imuTab_ = new IMUPanel(connector_);
+    tabWidget_->addTab(imuTab_, "IMU");
+    
+    connect(tabWidget_, &QTabWidget::currentChanged, this, &DashboardPanel::OnTabChanged);
 }
 
 void DashboardPanel::SetupChart() {
@@ -182,6 +232,61 @@ void DashboardPanel::OnEncoderDataReceived(const std::vector<float>& encoders) {
         if (t > 10000) {
             axisX_->setRange(t - 10000, t);
         }
+    } else {
+        // In manual mode, don't auto-update the axis range
+        // Just update the scroll bar to reflect new data availability
+        UpdateScrollBar();
+    }
+}
+
+void DashboardPanel::UpdateScrollBar() {
+    // Calculate the total time range
+    qreal maxTime = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (!currentSeries_[i]->points().isEmpty()) {
+            QPointF lastPoint = currentSeries_[i]->points().last();
+            maxTime = qMax(maxTime, lastPoint.x());
+        }
+    }
+    
+    if (maxTime > 10000) { // Only show scroll bar if we have more than 10 seconds of data
+        chartScrollBar_->setRange(0, 1000); // Fixed range for smooth scrolling
+        chartScrollBar_->setSingleStep(10);
+        chartScrollBar_->setPageStep(100);
+        // Don't update position here - let user control it
+    }
+}
+
+void DashboardPanel::SyncScrollBarToAxis() {
+    if (autoScrollCheck_->isChecked()) return; // Don't sync in auto-scroll mode
+    
+    // Sync scroll bar position to match current axis range
+    qreal minTime = std::numeric_limits<qreal>::max();
+    qreal maxTime = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (!currentSeries_[i]->points().isEmpty()) {
+            const auto& points = currentSeries_[i]->points();
+            for (const QPointF& point : points) {
+                minTime = qMin(minTime, point.x());
+                maxTime = qMax(maxTime, point.x());
+            }
+        }
+    }
+    
+    if (maxTime > minTime) {
+        qreal currentWindowSize = axisX_->max() - axisX_->min();
+        qreal totalRange = maxTime - minTime;
+        
+        if (totalRange > currentWindowSize) {
+            qreal scrollableRange = totalRange - currentWindowSize;
+            qreal currentLeft = axisX_->min();
+            qreal scrollPos = (currentLeft - minTime) * chartScrollBar_->maximum() / scrollableRange;
+            scrollPos = qBound(0.0, scrollPos, (qreal)chartScrollBar_->maximum());
+            
+            chartScrollBar_->blockSignals(true);
+            chartScrollBar_->setValue(scrollPos);
+            chartScrollBar_->blockSignals(false);
+        }
     }
 }
 
@@ -196,8 +301,16 @@ void DashboardPanel::OnMotorSelectionChanged() {
 void DashboardPanel::OnAutoScrollChanged(int state) {
     if (state == Qt::Checked) {
         chart_->setAnimationOptions(QChart::NoAnimation); // Performance
+        chartView_->setRubberBand(QChartView::NoRubberBand); // Disable manual scrolling when auto-scroll is on
+        chartScrollBar_->hide(); // Hide scroll bar in auto-scroll mode
     } else {
-        // Enable zoom/scroll?
+        chart_->setAnimationOptions(QChart::SeriesAnimations); // Re-enable animations
+        chartView_->setRubberBand(QChartView::HorizontalRubberBand); // Enable manual horizontal scrolling
+        
+        // When switching to manual mode, keep the current view
+        // The axis range is already set, just update scroll bar
+        UpdateScrollBar(); // Update scroll bar
+        chartScrollBar_->show(); // Show scroll bar in manual mode
     }
 }
 
@@ -205,8 +318,47 @@ void DashboardPanel::OnTicksChanged(int val) {
     // Just updates the value used in calculation
 }
 
+void DashboardPanel::OnScrollBarChanged(int value) {
+    if (autoScrollCheck_->isChecked()) return; // Don't interfere with auto-scroll
+    
+    // Calculate the total time range
+    qreal minTime = std::numeric_limits<qreal>::max();
+    qreal maxTime = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (!currentSeries_[i]->points().isEmpty()) {
+            const auto& points = currentSeries_[i]->points();
+            for (const QPointF& point : points) {
+                minTime = qMin(minTime, point.x());
+                maxTime = qMax(maxTime, point.x());
+            }
+        }
+    }
+    
+    if (maxTime > minTime) {
+        qreal currentWindowSize = axisX_->max() - axisX_->min(); // Use current zoom level
+        qreal totalRange = maxTime - minTime;
+        
+        if (totalRange > currentWindowSize) {
+            // Can scroll through history
+            qreal scrollableRange = totalRange - currentWindowSize;
+            qreal scrollPos = minTime + value * scrollableRange / chartScrollBar_->maximum();
+            axisX_->setRange(scrollPos, scrollPos + currentWindowSize);
+        } else {
+            // Not enough data to scroll, show all data
+            axisX_->setRange(minTime, maxTime);
+        }
+    }
+}
+
 void DashboardPanel::SetMaxRpm(int value) {
     if (axisY_) {
         axisY_->setRange(-value, value);
     }
+}
+
+void DashboardPanel::OnTabChanged(int index) {
+    // Check if Protocol Tester tab is selected (index 1)
+    bool isProtocolTester = (index == 1);
+    protocolTab_->SetLoggingEnabled(isProtocolTester);
+    emit ProtocolTesterTabActivated(isProtocolTester);
 }

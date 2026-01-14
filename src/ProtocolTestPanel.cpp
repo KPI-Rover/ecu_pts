@@ -8,7 +8,7 @@
 #include <QDateTime>
 
 ProtocolTestPanel::ProtocolTestPanel(ECUConnector* connector, QWidget *parent)
-    : QWidget(parent), connector_(connector) {
+    : QWidget(parent), connector_(connector), loggingEnabled_(false) {
     SetupUi();
     
     connect(connector_, &ECUConnector::ApiVersionReceived, this, [this](int version){
@@ -21,8 +21,25 @@ ProtocolTestPanel::ProtocolTestPanel(ECUConnector* connector, QWidget *parent)
         OnLogMessage(QString("RX <- get_all_encoders response: [%1]").arg(strValues.join(", ")));
     });
     
-    // We don't have specific signals for SetMotorSpeed response in ECUConnector yet (it just sends),
-    // but we can log the TX.
+    connect(connector_, &ECUConnector::EncoderValueUpdated, this, [this](int motorId, float value){
+        OnLogMessage(QString("RX <- get_encoder response: Motor %1 = %2").arg(motorId).arg(value));
+    });
+    
+    connect(connector_, &ECUConnector::ImuDataReceived, this, [this](const ImuData& data){
+        QString msg = QString("RX <- get_imu response:\n"
+                              "  Accel: x=%1, y=%2, z=%3\n"
+                              "  Gyro:  x=%4, y=%5, z=%6\n"
+                              "  Mag:   x=%7, y=%8, z=%9\n"
+                              "  Quat:  w=%10, x=%11, y=%12, z=%13")
+                      .arg(data.accel_x).arg(data.accel_y).arg(data.accel_z)
+                      .arg(data.gyro_x).arg(data.gyro_y).arg(data.gyro_z)
+                      .arg(data.mag_x).arg(data.mag_y).arg(data.mag_z)
+                      .arg(data.quat_w).arg(data.quat_x).arg(data.quat_y).arg(data.quat_z);
+        OnLogMessage(msg);
+    });
+
+    connect(connector_, &ECUConnector::RawDataSent, this, &ProtocolTestPanel::OnRawDataSent);
+    connect(connector_, &ECUConnector::RawDataReceived, this, &ProtocolTestPanel::OnRawDataReceived);
 }
 
 void ProtocolTestPanel::SetupUi() {
@@ -40,7 +57,8 @@ void ProtocolTestPanel::SetupUi() {
         "set_motor_speed (0x02)",
         "set_all_motors_speed (0x03)",
         "get_encoder (0x04)", // Not implemented in Connector yet
-        "get_all_encoders (0x05)"
+        "get_all_encoders (0x05)",
+        "get_imu (0x06)"
     });
     connect(cmdCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ProtocolTestPanel::OnCommandChanged);
     cmdLayout->addWidget(cmdCombo_);
@@ -77,10 +95,20 @@ void ProtocolTestPanel::SetupUi() {
     layoutSetAll->addStretch();
     paramsStack_->addWidget(pageSetAll);
     
-    // 3: get_encoder (Placeholder)
-    paramsStack_->addWidget(new QWidget());
+    // 3: get_encoder
+    QWidget* pageGetEncoder = new QWidget();
+    QHBoxLayout* layoutGetEncoder = new QHBoxLayout(pageGetEncoder);
+    layoutGetEncoder->addWidget(new QLabel("Motor ID:"));
+    encoderMotorIdSpin_ = new QSpinBox();
+    encoderMotorIdSpin_->setRange(0, 3);
+    layoutGetEncoder->addWidget(encoderMotorIdSpin_);
+    layoutGetEncoder->addStretch();
+    paramsStack_->addWidget(pageGetEncoder);
     
     // 4: get_all_encoders
+    paramsStack_->addWidget(new QWidget());
+    
+    // 5: get_imu
     paramsStack_->addWidget(new QWidget());
     
     inputLayout->addWidget(paramsStack_);
@@ -133,16 +161,41 @@ void ProtocolTestPanel::OnSendClicked() {
             break;
         }
         case 3: // get_encoder
-            OnLogMessage("Error: get_encoder (0x04) not implemented");
+            OnLogMessage(QString("TX -> get_encoder (0x04) ID=%1").arg(encoderMotorIdSpin_->value()));
+            connector_->GetEncoder(encoderMotorIdSpin_->value());
             break;
         case 4: // get_all_encoders
             OnLogMessage("TX -> get_all_encoders (0x05)");
             connector_->GetAllEncoders();
             break;
+        case 5: // get_imu
+            OnLogMessage("TX -> get_imu (0x06)");
+            connector_->GetImu();
+            break;
     }
 }
 
 void ProtocolTestPanel::OnLogMessage(const QString& msg) {
+    if (!loggingEnabled_) return;
+    
     QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
     logText_->append(QString("[%1] %2").arg(timestamp, msg));
+}
+
+void ProtocolTestPanel::SetLoggingEnabled(bool enabled) {
+    loggingEnabled_ = enabled;
+}
+
+void ProtocolTestPanel::OnRawDataSent(const std::vector<uint8_t>& data) {
+    if (!loggingEnabled_) return;
+    QString hex;
+    for (uint8_t b : data) hex += QString("%1 ").arg(b, 2, 16, QChar('0')).toUpper();
+    OnLogMessage(QString("TX RAW: [ %1]").arg(hex));
+}
+
+void ProtocolTestPanel::OnRawDataReceived(const std::vector<uint8_t>& data) {
+    if (!loggingEnabled_) return;
+    QString hex;
+    for (uint8_t b : data) hex += QString("%1 ").arg(b, 2, 16, QChar('0')).toUpper();
+    OnLogMessage(QString("RX RAW: [ %1]").arg(hex));
 }

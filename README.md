@@ -1,41 +1,22 @@
-# ECU PTS - Performance Testing Software (C++)
+# ECU PTS - Production Testing Software
 
-## Starting the Application
+The **ECU Production Testing Software (PTS)** is a Linux desktop application designed to interface with the KPI Rover's chassis controller. It provides a comprehensive suite of tools for real-time telemetry monitoring, motor calibration, and protocol debugging.
 
-To start the Qt6-based motor control GUI application:
+This software was fully written by **GitHub Copilot** based on the requirements specified in [doc/srs.md](doc/srs.md).
 
-1. Navigate to the project root directory (`/home/holy/prj/kpi-rover/ecu_pts`).
+## Install required packages
+To build this project on Ubuntu, you need to install the following packages:
+```bash
+sudo apt update
+sudo apt install build-essential cmake qt6-base-dev libqt6charts6-dev
+```
 
-2. Build the C++ application:
-   ```
-   mkdir build
-   cd build
-   cmake ..
-   make
-   ```
+## Build
+```bash
+./build.sh
+```
 
-3. Run the application:
-   ```
-   ./ecu_pts_cpp
-   ```
-
-   This will launch the GUI window for controlling the rover motors. Ensure the rover is accessible at the configured serial port (default: /dev/ttyUSB0 at 115200 baud).
-
-## Features
-
-- Serial communication with ECU
-- Motor speed control with sliders
-- Real-time RPM monitoring via charts
-- Configurable encoder ticks per revolution
-- Max RPM limits for control and display
-
-## Requirements
-
-- Qt6 (with Charts)
-- CMake
-- C++17 compiler
-- Linux environment
-
-
-
-
+## Run
+```bash
+./build/ecu_pts
+```
